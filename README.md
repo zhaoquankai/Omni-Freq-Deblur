@@ -6,28 +6,44 @@
 
 <sup>1</sup>School of Electronic and Information Engineering, Northwest University
 
-**[Paper (Under Review)]** | **[Supplementary Material]** | **[Pre-trained Models]** | **[Visual Results]**
+[![Paper](https://img.shields.io/badge/Paper-Arxiv-red)](https://github.com/zhaoquankai/Omni-Freq-Deblur) 
+[![Dataset](https://img.shields.io/badge/Dataset-Download-green)](#-datasets)
+[![Pretrained Model](https://img.shields.io/badge/Pretrained-Model-blue)](https://github.com/zhaoquankai/Omni-Freq-Deblur)
 
 </div>
-
-> **Abstract:** Current deblurring methods, despite achieving remarkable performance on 2D scenes, often suffer from band-limited frequency recovery and an inability to handle 3D scenes. Unlike 2D blur, 3D blur is driven by six-degree-of-freedom (6-DoF) camera motion, which results in spatially-variant distortions where pixel displacement is intrinsically entangled with scene depth. To address this challenge, we propose Omni-Freq-Deblur, a unified framework that casts both 2D and 3D scene deblurring as an explicit spectral reconstruction problem. The framework decomposes the deblurring process into three complementary frequency bands: Zero-Frequency Calibration (ZFC), Low-Frequency Wavelet Self-Attention (L-WSA), and High-Frequency Wavelet Self-Attention (H-WSA).
 
 ---
 
 ## 🚀 Network Architecture
 
 <p align="center">
-  <img src="./figures/architecture.png" width="90%">
+  <img src="./figures/architecture.png" width="100%">
 </p>
 
 ---
 
-## 🛠️ Installation
+## 📂 Datasets
 
-```bash
-git clone [https://github.com/zhaoquankai/Omni-Freq-Deblur.git](https://github.com/zhaoquankai/Omni-Freq-Deblur.git)
-cd Omni-Freq-Deblur
-conda create -n omnifreq python=3.10
-conda activate omnifreq
-pip install -r requirements.txt
-python setup.py develop
+You can download the following datasets using the official links provided in the table:
+
+| Dataset | Type | Download Link |
+| :--- | :---: | :--- |
+| **GoPro** | 2D Dynamic | [[Official Page]](https://seungjunnah.github.io/Datasets/gopro.html) [[Google Drive]](https://drive.google.com/open?id=1S0vK8SpsEAnXvG780785Vp6qHjM7xY-R) |
+| **HIDE** | 2D Human | [[Official Page]](https://github.com/joanshen0508/Hide-Dataset) [[Google Drive]](https://drive.google.com/drive/folders/15E8w-n3Z3p3O2zE_A3S6_i-T6u6r2V0-) |
+| **RealBlur** | 2D Real | [[Official Page]](https://github.com/rim-jhim/RealBlur) [[Google Drive]](https://drive.google.com/drive/folders/1R4_7y4X8XjS_zPZ_yqN7-Y_M6-Oq-8vL) |
+| **DeRF (Deblur-NeRF)** | 3D Scene | [[Official Page]](https://github.com/limacv/Deblur-NeRF) [[Dataset Link]](https://drive.google.com/drive/folders/1LpM-3z7X8Q8v-XjYf0S7_k-Y_W-K_B) |
+| **GSBlur** | 3D Gaussian | [[OpenReview]](https://openreview.net/forum?id=Awu8YlEofZ) [[Github]](https://github.com/zhaoquankai/Omni-Freq-Deblur) |
+
+### Dataset Organization
+Please organize your data as follows:
+```text
+Omni-Freq-Deblur/
+├── datasets/
+│   ├── GoPro/
+│   │   ├── train/
+│   │   └── test/
+│   ├── HIDE/
+│   └── GSBlur/
+│       ├── test/
+│       │   ├── input_noise/
+│       │   └── target/
