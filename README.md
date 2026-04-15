@@ -13,9 +13,20 @@
 
 ---
 
-## 💡 Motivation: 2D vs. 3D Scene Deblurring
+## 📖 Abstract
 
-Restoring sharpness in dynamic 3D scenes (e.g., 3D Gaussian Splatting or NeRF) is significantly more challenging than 2D deblurring. 3D blur is spatially-variant and intrinsically entangled with scene depth and 6-DoF camera motion. 
+Current deblurring methods, despite achieving remarkable performance on 2D scenes, often suffer from band-limited frequency recovery and an inability to handle 3D scenes. Unlike 2D blur, 3D blur is driven by six-degree-of-freedom (6-DoF) camera motion, which results in spatially-variant distortions where pixel displacement is intrinsically entangled with scene depth. To address this challenge, we propose **Omni-Freq-Deblur**, a unified framework that casts both 2D and 3D scene deblurring as an explicit spectral reconstruction problem. 
+
+The framework decomposes the deblurring process into three complementary frequency bands:
+1. A zero-frequency global rectification utilizes **Zero-Frequency Calibration (ZFC)** to rectify global distortions. 
+2. A low-frequency structural enhancement employs **Low-Frequency Wavelet Self-Attention (L-WSA)** to reconstruct the coherent structural skeleton. 
+3. A high-frequency textural refinement leverages **High-Frequency Wavelet Self-Attention (H-WSA)** to precisely recover fine-grained textures. 
+
+Extensive experiments demonstrate that Omni-Freq-Deblur achieves state-of-the-art performance on multiple 2D deblurring datasets and recent 3D deblurring benchmarks. Furthermore, its efficacy as a geometrically consistent prior significantly suppresses artifacts in downstream 3D reconstruction tasks, validating its potential as a universal deblurring baseline.
+
+---
+
+## 💡 Motivation: 2D vs. 3D Scene Deblurring
 
 <p align="center">
   <img src="./models/gopro.png" width="48%" alt="2D Deblurring (GoPro)">
@@ -27,8 +38,6 @@ Restoring sharpness in dynamic 3D scenes (e.g., 3D Gaussian Splatting or NeRF) i
 ---
 
 ## 🚀 Network Architecture
-
-We propose a unified spectral reconstruction framework that decomposes the deblurring process into three complementary frequency bands: Zero-Frequency Calibration (ZFC), Low-Frequency Wavelet Self-Attention (L-WSA), and High-Frequency Wavelet Self-Attention (H-WSA).
 
 <p align="center">
   <img src="./models/Omni-Freq-Deblur.png" width="100%" alt="Architecture">
@@ -102,21 +111,24 @@ Our model demonstrates state-of-the-art performance with a highly competitive pa
   </tbody>
 </table>
 
+<br>
 <p align="center">
   <b>Table 2: 2D Scene Deblurring Comparisons (GoPro & HIDE)</b>
 </p>
-<table style="width: 75%; table-layout: fixed; margin: 0 auto; border-collapse: collapse;" align="center">
+<table style="width: 85%; table-layout: fixed; margin: 0 auto; border-collapse: collapse;" align="center">
   <thead>
     <tr style="border-bottom: 1px solid #ccc;">
       <th style="width: 20%;">Method</th>
+      <th style="width: 15%;">Venue</th>
       <th style="width: 15%;">Params</th>
-      <th style="width: 30%;">GoPro (PSNR↑ / SSIM↑)</th>
-      <th style="width: 30%;">HIDE (PSNR↑ / SSIM↑)</th>
+      <th style="width: 25%;">GoPro (PSNR↑/SSIM↑)</th>
+      <th style="width: 25%;">HIDE (PSNR↑/SSIM↑)</th>
     </tr>
   </thead>
   <tbody>
     <tr>
       <td>Restormer</td>
+      <td>CVPR'22</td>
       <td>26.1M</td>
       <td>32.92 / 0.961</td>
       <td>31.22 / 0.942</td>
@@ -130,12 +142,14 @@ Our model demonstrates state-of-the-art performance with a highly competitive pa
     </tr>
     <tr>
       <td>EAMamba</td>
+      <td>ICCV'25</td>
       <td>26.0M</td>
       <td><u>33.58</u> / <u>0.966</u></td>
       <td><u>31.42</u> / <u>0.944</u></td>
     </tr>
     <tr style="background-color: #f9f9f9;">
       <td><b>Omni-Freq-Deblur</b></td>
+      <td><b>Ours</b></td>
       <td><b>21.9M</b></td>
       <td><b>34.31 / 0.970</b></td>
       <td><b>32.00 / 0.950</b></td>
