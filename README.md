@@ -26,30 +26,24 @@ Extensive experiments demonstrate that Omni-Freq-Deblur achieves state-of-the-ar
 
 ---
 
-## 💡 Motivation: 2D vs. 3D Scene Deblurring
-
-<p align="center">
-  <img src="./models/gopro.png" width="48%" alt="2D Deblurring (GoPro)">
-  <img src="./models/gsblur.png" width="48%" alt="3D Deblurring (GS-Blur)">
-  <br>
-  <em>Figure 1: Comparison of restoration performance on standard 2D (GoPro) and 3D (GS-Blur) benchmarks. Our method effectively captures omni-frequency information to recover sharp textures in both domains.</em>
-</p>
-
----
-
 ## 🚀 Network Architecture
 
 <p align="center">
   <img src="./models/Omni-Freq-Deblur.png" width="100%" alt="Architecture">
   <br>
-  <em>Figure 2: The pipeline of Omni-Freq-Deblur. By performing explicit spectral reconstruction, our model handles the depth-dependent blur in 3D scenes more effectively than spatial-only methods.</em>
+  <em>Figure 1: The pipeline of Omni-Freq-Deblur. By performing explicit spectral reconstruction, our model handles the depth-dependent blur in 3D scenes more effectively than spatial-only methods.</em>
 </p>
 
 ---
 
 ## 🤝 Visual Comparisons 
 
-We present dynamic visual comparisons below, alternating between blurred inputs and our sharp, reconstructed outputs to demonstrate the restoration performance.
+We present both static and dynamic visual comparisons below to demonstrate the superior restoration performance of our Omni-Freq-Deblur framework.
+
+<p align="center">
+  <img src="./models/gopro.png" width="48%" alt="2D Deblurring (GoPro)">
+  <img src="./models/gsblur.png" width="48%" alt="3D Deblurring (GS-Blur)">
+</p>
 
 <div align="center">
   <h3>Case 1: GoPro Benchmark (2D Dynamic Scene)</h3>
