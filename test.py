@@ -15,51 +15,54 @@ from models.Omni_freq_deblur_arch import Omni_freq_deblur_arch
 
 DATAROOT_LQ = '/home/zqk/data/GS-Blur-Split/test/input_noise'
 DATAROOT_GT = '/home/zqk/data/GS-Blur-Split/test/target'
-TEST_MODEL = '/home/zqk/EVSSM-ori/GSblur.pth'
+TEST_MODEL = '/home/zqk/Omni_freq_deblur_arch/GSblur.pth'
 NUM_WORKERS = 4
 MODEL_WIDTH = 48
 
-def ssim_torch(img1, img2, window_size=11, window=None, size_average=True):
-    val_range = 1.0
-    padd = window_size // 2
-    (_, channel, height, width) = img1.size()
-    
-    if window is None:
-        real_size = min(window_size, height, width)
-        window = create_window(real_size, channel).to(img1.device).type(img1.dtype)
 
-    mu1 = F_torch.conv2d(img1, window, padding=padd, groups=channel)
-    mu2 = F_torch.conv2d(img2, window, padding=padd, groups=channel)
+class SSIM(nn.Module):
+    def __init__(self, window_size=11, sigma=1.5):
+        super(SSIM, self).__init__()
+        self.window_size = window_size
+        self.C1 = (0.01 * 1.0) ** 2
+        self.C2 = (0.03 * 1.0) ** 2
+        
+        def gaussian(window_size, sigma):
+            gauss = torch.Tensor([math.exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
+            return gauss / gauss.sum()
 
-    mu1_sq = mu1.pow(2)
-    mu2_sq = mu2.pow(2)
-    mu1_mu2 = mu1 * mu2
+        _1D_window = gaussian(window_size, sigma)
+        _2D_window = torch.outer(_1D_window, _1D_window)
+        _3D_window = _2D_window.unsqueeze(0) * _1D_window.view(window_size, 1, 1)
+        
+        self.kernel = _3D_window.float().unsqueeze(0).unsqueeze(0)
+        
+        self.conv = nn.Conv3d(1, 1, (window_size, window_size, window_size), 
+                                stride=1, padding=(window_size//2, window_size//2, window_size//2), 
+                                bias=False, padding_mode='replicate')
+        
+        self.conv.weight.data = self.kernel
+        self.conv.weight.requires_grad = False
 
-    sigma1_sq = F_torch.conv2d(img1 * img1, window, padding=padd, groups=channel) - mu1_sq
-    sigma2_sq = F_torch.conv2d(img2 * img2, window, padding=padd, groups=channel) - mu2_sq
-    sigma12 = F_torch.conv2d(img1 * img2, window, padding=padd, groups=channel) - mu1_mu2
+    def forward(self, img1, img2):
+        img1 = img1.permute(0, 2, 3, 1).unsqueeze(1)
+        img2 = img2.permute(0, 2, 3, 1).unsqueeze(1)
 
-    C1 = (0.01 * val_range) ** 2
-    C2 = (0.03 * val_range) ** 2
+        mu1 = self.conv(img1)
+        mu2 = self.conv(img2)
 
-    v1 = 2.0 * sigma12 + C2
-    v2 = sigma1_sq + sigma2_sq + C2
+        mu1_sq = mu1 ** 2
+        mu2_sq = mu2 ** 2
+        mu1_mu2 = mu1 * mu2
 
-    ssim_map = ((2 * mu1_mu2 + C1) * v1) / ((mu1_sq + mu2_sq + C1) * v2)
+        sigma1_sq = self.conv(img1 ** 2) - mu1_sq
+        sigma2_sq = self.conv(img2 ** 2) - mu2_sq
+        sigma12 = self.conv(img1 * img2) - mu1_mu2
 
-    if size_average:
+        ssim_map = ((2 * mu1_mu2 + self.C1) * (2 * sigma12 + self.C2)) / \
+                   ((mu1_sq + mu2_sq + self.C1) * (sigma1_sq + sigma2_sq + self.C2))
+
         return ssim_map.mean()
-    else:
-        return ssim_map.mean(1).mean(1).mean(1)
-
-def create_window(window_size, channel):
-    def gaussian(window_size, sigma):
-        gauss = torch.Tensor([math.exp(-(x - window_size // 2) ** 2 / float(2 * sigma ** 2)) for x in range(window_size)])
-        return gauss / gauss.sum()
-    _1D_window = gaussian(window_size, 1.5).unsqueeze(1)
-    _2D_window = _1D_window.mm(_1D_window.t()).float().unsqueeze(0).unsqueeze(0)
-    window = _2D_window.expand(channel, 1, window_size, window_size).contiguous()
-    return window
 
 def psnr_torch(img1, img2):
     mse = torch.mean((img1 - img2) ** 2)
@@ -145,8 +148,7 @@ def main():
         pin_memory=True
     )
 
-    sample_c = 3 
-    ssim_win = create_window(11, sample_c).to(device)
+    ssim_calc = SSIM(window_size=11).to(device)
 
     local_psnr = 0.0
     local_ssim = 0.0
@@ -182,7 +184,7 @@ def main():
             pred = torch.clamp(pred, 0, 1)
 
             local_psnr += psnr_torch(pred, label_img).item()
-            local_ssim += ssim_torch(pred, label_img, window=ssim_win).item()
+            local_ssim += ssim_calc(pred, label_img).item()
             local_count += 1
 
     metrics_tensor = torch.tensor([local_psnr, local_ssim, local_count], dtype=torch.float64, device=device)
