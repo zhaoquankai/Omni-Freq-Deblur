@@ -99,7 +99,7 @@ Our model demonstrates state-of-the-art performance with a highly competitive pa
       <td><b>Omni-Freq-Deblur</b></td>
       <td><b>Ours</b></td>
       <td><b>21.9M</b></td>
-      <td><b>32.66 / 0.957</b></td>
+      <td><b>32.66 / 0.955</b></td>
       <td><b>27.52 / 0.894</b> | <b>30.57 / 0.937</b></td>
     </tr>
   </tbody>
