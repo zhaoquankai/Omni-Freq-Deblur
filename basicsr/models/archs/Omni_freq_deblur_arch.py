@@ -513,24 +513,113 @@ class LCmamba(nn.Module):
         x = x + self.ffn(self.norm2(x))
         return x
 
+def _linear_mlp_params(in_channels, hidden_channels, out_channels):
+    """Parameter count for Linear(in, hidden) + Linear(hidden, out), with bias."""
+    return (in_channels * hidden_channels + hidden_channels
+            + hidden_channels * out_channels + out_channels)
+
+
+def _find_hidden_for_param_budget(in_channels, out_channels, target_params):
+    """Find the integer hidden width whose two-layer MLP best matches a budget."""
+    denominator = in_channels + out_channels + 1
+    estimate = (target_params - out_channels) / denominator
+    candidates = {
+        max(1, int(estimate)),
+        max(1, int(estimate) + 1),
+        max(1, int(estimate) - 1)
+    }
+    return min(
+        candidates,
+        key=lambda hidden: abs(
+            _linear_mlp_params(in_channels, hidden, out_channels) - target_params
+        )
+    )
+
+
 class DCFiLM(nn.Module):
-    def __init__(self, source_channels, target_channels, expansion=4, gamma_scale=0.1, beta_scale=0.1):
+    """Original ZFC module: shallow-feature GAP -> bounded scale/shift."""
+
+    def __init__(self, source_channels, target_channels, expansion=4,
+                 gamma_scale=0.1, beta_scale=0.1):
         super().__init__()
         self.gamma_scale = gamma_scale
         self.beta_scale = beta_scale
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.mlp = nn.Sequential(
-            nn.Linear(source_channels, source_channels*expansion),
+            nn.Linear(source_channels, source_channels * expansion),
             nn.GELU(),
-            nn.Linear(source_channels*expansion, 2*target_channels)
+            nn.Linear(source_channels * expansion, 2 * target_channels)
         )
-    
+
     def forward(self, x):
         out = self.mlp(self.pool(x).flatten(1))
         c = out.shape[1] // 2
-        gamma = 1 + self.gamma_scale * torch.tanh(out[:, :c]).view(-1, c, 1, 1)
-        beta = self.beta_scale * torch.tanh(out[:, c:]).view(-1, c, 1, 1)
+        gamma = 1 + self.gamma_scale * torch.tanh(
+            out[:, :c]
+        ).view(-1, c, 1, 1)
+        beta = self.beta_scale * torch.tanh(
+            out[:, c:]
+        ).view(-1, c, 1, 1)
         return gamma, beta
+
+
+class VanillaFiLM(nn.Module):
+    """Identity-centered, unbounded FiLM using a supplied conditioning feature."""
+
+    def __init__(self, source_channels, target_channels, hidden_channels):
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.mlp = nn.Sequential(
+            nn.Linear(source_channels, hidden_channels),
+            nn.GELU(),
+            nn.Linear(hidden_channels, 2 * target_channels)
+        )
+
+    def forward(self, condition, target):
+        out = self.mlp(self.pool(condition).flatten(1))
+        gamma, beta = out.chunk(2, dim=1)
+        gamma = (1.0 + gamma).view(-1, gamma.shape[1], 1, 1)
+        beta = beta.view(-1, beta.shape[1], 1, 1)
+        return gamma * target + beta
+
+
+class SEBlock(nn.Module):
+    """Canonical self-conditioned SE block with a configurable hidden width."""
+
+    def __init__(self, channels, reduction=16, hidden_channels=None):
+        super().__init__()
+        hidden = max(1, channels // reduction) if hidden_channels is None else hidden_channels
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc1 = nn.Linear(channels, hidden)
+        self.act = nn.ReLU(inplace=True)
+        self.fc2 = nn.Linear(hidden, channels)
+        self.gate = nn.Sigmoid()
+        self.hidden_channels = hidden
+
+    def forward(self, x):
+        descriptor = self.pool(x).flatten(1)
+        scale = self.gate(self.fc2(self.act(self.fc1(descriptor))))
+        return x * scale.view(scale.shape[0], scale.shape[1], 1, 1)
+
+
+class CrossScaleSE(nn.Module):
+    """SE-style multiplicative gate from shallow encoder to deep decoder features."""
+
+    def __init__(self, source_channels, target_channels, hidden_channels):
+        super().__init__()
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        self.fc1 = nn.Linear(source_channels, hidden_channels)
+        self.act = nn.ReLU(inplace=True)
+        self.fc2 = nn.Linear(hidden_channels, target_channels)
+        self.gate = nn.Sigmoid()
+        self.hidden_channels = hidden_channels
+
+    def forward(self, source, target):
+        descriptor = self.pool(source).flatten(1)
+        scale = self.gate(self.fc2(self.act(self.fc1(descriptor))))
+        return target * scale.view(scale.shape[0], scale.shape[1], 1, 1)
+
+
 
 class Omni_freq_deblur_arch(nn.Module):
     def __init__(self, 
@@ -547,9 +636,23 @@ class Omni_freq_deblur_arch(nn.Module):
                  dc_gamma_scale=0.1,
                  dc_beta_scale=0.1,
                  enable_dc=True,
+                 dc_mode='zfc',
+                 dc_se_reduction=16,
                  mamba_overlap_ratio=0.25):
         super().__init__()
-        self.enable_dc = enable_dc
+        # Keep enable_dc for backward compatibility with existing YAML files.
+        # If explicitly disabled, it takes precedence over dc_mode.
+        self.dc_mode = 'none' if not enable_dc else dc_mode.lower()
+        valid_dc_modes = {
+            'none', 'zfc', 'se', 'se_matched',
+            'cross_se_matched', 'film', 'film_bottleneck'
+        }
+        if self.dc_mode not in valid_dc_modes:
+            raise ValueError(
+                f"Unsupported dc_mode='{self.dc_mode}'. "
+                f"Choose from {sorted(valid_dc_modes)}."
+            )
+        self.enable_dc = self.dc_mode != 'none'
         self.patch_embed = OverlapPatchEmbed(inp_channels, dim)
 
         print(f"\n{'='*70}")
@@ -584,9 +687,75 @@ class Omni_freq_deblur_arch(nn.Module):
         ])
         self.up3_2 = Upsample(dim * 4)
 
-        if enable_dc:
-            self.dc_film = DCFiLM(dim, dim*4, expansion=dc_expansion,
-                                   gamma_scale=dc_gamma_scale, beta_scale=dc_beta_scale)
+        # All alternatives are attached at the original ZFC insertion point.
+        # Default source: l1_enc (dim channels); target: l3_dec (4*dim channels).
+        self.dc_film = None
+        self.dc_se = None
+        self.dc_cross_se = None
+
+        source_channels = dim
+        target_channels = dim * 4
+        zfc_hidden = source_channels * dc_expansion
+        zfc_param_budget = _linear_mlp_params(
+            source_channels, zfc_hidden, 2 * target_channels
+        )
+
+        if self.dc_mode == 'zfc':
+            # Preserve the original module class and state-dict key names.
+            self.dc_film = DCFiLM(
+                source_channels, target_channels,
+                expansion=dc_expansion,
+                gamma_scale=dc_gamma_scale,
+                beta_scale=dc_beta_scale
+            )
+        elif self.dc_mode == 'se':
+            # Canonical SE: GAP(target) -> C/r -> C -> sigmoid -> target * scale.
+            self.dc_se = SEBlock(
+                target_channels, reduction=dc_se_reduction
+            )
+        elif self.dc_mode == 'se_matched':
+            # Canonical self-conditioned SE widened to match the ZFC parameter budget.
+            hidden = _find_hidden_for_param_budget(
+                target_channels, target_channels, zfc_param_budget
+            )
+            self.dc_se = SEBlock(
+                target_channels, hidden_channels=hidden
+            )
+        elif self.dc_mode == 'cross_se_matched':
+            # Same shallow source and deep target as ZFC; multiplicative gating only.
+            hidden = _find_hidden_for_param_budget(
+                source_channels, target_channels, zfc_param_budget
+            )
+            self.dc_cross_se = CrossScaleSE(
+                source_channels, target_channels, hidden
+            )
+        elif self.dc_mode == 'film':
+            # Same source/target widths as ZFC; remove only the tanh/range constraints.
+            self.dc_film = VanillaFiLM(
+                source_channels, target_channels, hidden_channels=zfc_hidden
+            )
+        elif self.dc_mode == 'film_bottleneck':
+            # Optional condition-source control: GAP(l3_enc) conditions l3_dec.
+            hidden = _find_hidden_for_param_budget(
+                target_channels, 2 * target_channels, zfc_param_budget
+            )
+            self.dc_film = VanillaFiLM(
+                target_channels, target_channels, hidden_channels=hidden
+            )
+
+        active_dc_module = (
+            self.dc_film if self.dc_film is not None
+            else self.dc_se if self.dc_se is not None
+            else self.dc_cross_se
+        )
+        dc_params = (
+            sum(p.numel() for p in active_dc_module.parameters())
+            if active_dc_module is not None else 0
+        )
+        print(
+            f"[ZFC Ablation] mode={self.dc_mode}, "
+            f"module_params={dc_params:,}, zfc_reference_params={zfc_param_budget:,}"
+        )
 
         self.fuse2 = ChannelAttentionFuse(dim * 2, reduction=16, bias=bias)
         self.decoder_level2 = nn.Sequential(*[
@@ -623,9 +792,18 @@ class Omni_freq_deblur_arch(nn.Module):
 
         l3_dec = self.decoder_level3(l3_enc)
         
-        if self.enable_dc:
+        if self.dc_mode == 'zfc':
             gamma, beta = self.dc_film(l1_enc)
             l3_dec = l3_dec * gamma + beta
+        elif self.dc_mode == 'film':
+            # Same shallow condition source as ZFC; only the bounded parameterization differs.
+            l3_dec = self.dc_film(l1_enc, l3_dec)
+        elif self.dc_mode == 'film_bottleneck':
+            l3_dec = self.dc_film(l3_enc, l3_dec)
+        elif self.dc_mode in ('se', 'se_matched'):
+            l3_dec = self.dc_se(l3_dec)
+        elif self.dc_mode == 'cross_se_matched':
+            l3_dec = self.dc_cross_se(l1_enc, l3_dec)
 
         l2_dec = self.decoder_level2(self.fuse2(l2_enc, self.up3_2(l3_dec)))
         l1_dec = self.decoder_level1(self.fuse1(l1_enc, self.up2_1(l2_dec)))
@@ -633,3 +811,7 @@ class Omni_freq_deblur_arch(nn.Module):
 
         return self.output(l1_dec) + inp_img
 
+
+
+# Backward-compatible alias used by the released YAML configuration.
+OmniFreqDeblur_Arch = Omni_freq_deblur_arch
