@@ -656,23 +656,25 @@ class Omni_freq_deblur_arch(nn.Module):
             source_channels, zfc_hidden, 2 * target_channels
         )
 
-        # Isolate the RNG used by the replacement module. This prevents the
-        # different module shapes from shifting initialization of every shared
-        # downstream layer, making the common backbone initialization identical
-        # across ablation variants when the same global seed is used.
+        # Preserve the original ZFC initialization stream for every shared
+        # backbone layer: snapshot the RNG, consume exactly one ZFC initializer
+        # on the global stream (as the original model did), then build the chosen
+        # replacement from the same starting RNG state in an isolated fork.
+        zfc_rng_state = torch.get_rng_state()
+        _zfc_reference_init = DCFiLM(
+            source_channels, target_channels,
+            expansion=dc_expansion,
+            gamma_scale=dc_gamma_scale,
+            beta_scale=dc_beta_scale,
+            bounded=True
+        )
+        torch.set_rng_state(zfc_rng_state)
         with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(3407)
             if self.dc_mode == 'zfc':
-                # Original ZFC: preserve module names and mathematical operation.
-                self.dc_film = DCFiLM(
-                    source_channels, target_channels,
-                    expansion=dc_expansion,
-                    gamma_scale=dc_gamma_scale,
-                    beta_scale=dc_beta_scale,
-                    bounded=True
-                )
+                # Exact original initialization and original state-dict names.
+                self.dc_film = _zfc_reference_init
             elif self.dc_mode == 'film':
-                # Same source/target/MLP/parameter count as ZFC; remove only tanh bounds.
+                # Same initial MLP weights as ZFC; only tanh bounds are removed.
                 self.dc_film = DCFiLM(
                     source_channels, target_channels,
                     expansion=dc_expansion,
@@ -681,11 +683,12 @@ class Omni_freq_deblur_arch(nn.Module):
                     bounded=False
                 )
             elif self.dc_mode == 'se_matched':
-                # Canonical self-conditioned SE on l3_dec, widened to match ZFC parameters.
                 se_hidden = _find_hidden_for_param_budget(
                     target_channels, target_channels, zfc_param_budget
                 )
                 self.dc_se = SECalibrator(target_channels, se_hidden)
+        # The outer RNG has advanced exactly as it did when constructing original
+        # ZFC. Different replacement parameter shapes cannot perturb later layers.
 
         active_module = self.dc_film if self.dc_film is not None else self.dc_se
         module_params = (
