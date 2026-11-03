@@ -668,8 +668,11 @@ class Omni_freq_deblur_arch(nn.Module):
             beta_scale=dc_beta_scale,
             bounded=True
         )
-        torch.set_rng_state(zfc_rng_state)
         with torch.random.fork_rng(devices=[]):
+            # Rewind only inside the fork so each replacement starts from the
+            # same ZFC initialization stream; exiting restores the post-ZFC
+            # global RNG state for the unchanged downstream backbone.
+            torch.set_rng_state(zfc_rng_state)
             if self.dc_mode == 'zfc':
                 # Exact original initialization and original state-dict names.
                 self.dc_film = _zfc_reference_init
