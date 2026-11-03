@@ -656,30 +656,36 @@ class Omni_freq_deblur_arch(nn.Module):
             source_channels, zfc_hidden, 2 * target_channels
         )
 
-        if self.dc_mode == 'zfc':
-            # Original ZFC: preserve module names and mathematical operation.
-            self.dc_film = DCFiLM(
-                source_channels, target_channels,
-                expansion=dc_expansion,
-                gamma_scale=dc_gamma_scale,
-                beta_scale=dc_beta_scale,
-                bounded=True
-            )
-        elif self.dc_mode == 'film':
-            # Same source/target/MLP/parameter count as ZFC; remove only tanh bounds.
-            self.dc_film = DCFiLM(
-                source_channels, target_channels,
-                expansion=dc_expansion,
-                gamma_scale=dc_gamma_scale,
-                beta_scale=dc_beta_scale,
-                bounded=False
-            )
-        elif self.dc_mode == 'se_matched':
-            # Canonical self-conditioned SE on l3_dec, widened to match ZFC parameters.
-            se_hidden = _find_hidden_for_param_budget(
-                target_channels, target_channels, zfc_param_budget
-            )
-            self.dc_se = SECalibrator(target_channels, se_hidden)
+        # Isolate the RNG used by the replacement module. This prevents the
+        # different module shapes from shifting initialization of every shared
+        # downstream layer, making the common backbone initialization identical
+        # across ablation variants when the same global seed is used.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(3407)
+            if self.dc_mode == 'zfc':
+                # Original ZFC: preserve module names and mathematical operation.
+                self.dc_film = DCFiLM(
+                    source_channels, target_channels,
+                    expansion=dc_expansion,
+                    gamma_scale=dc_gamma_scale,
+                    beta_scale=dc_beta_scale,
+                    bounded=True
+                )
+            elif self.dc_mode == 'film':
+                # Same source/target/MLP/parameter count as ZFC; remove only tanh bounds.
+                self.dc_film = DCFiLM(
+                    source_channels, target_channels,
+                    expansion=dc_expansion,
+                    gamma_scale=dc_gamma_scale,
+                    beta_scale=dc_beta_scale,
+                    bounded=False
+                )
+            elif self.dc_mode == 'se_matched':
+                # Canonical self-conditioned SE on l3_dec, widened to match ZFC parameters.
+                se_hidden = _find_hidden_for_param_budget(
+                    target_channels, target_channels, zfc_param_budget
+                )
+                self.dc_se = SECalibrator(target_channels, se_hidden)
 
         active_module = self.dc_film if self.dc_film is not None else self.dc_se
         module_params = (
