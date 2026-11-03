@@ -574,6 +574,10 @@ class VanillaFiLM(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_channels, 2 * target_channels)
         )
+        # Start from an identity transformation (gamma=1, beta=0) for stable
+        # comparison against the bounded, near-identity ZFC parameterization.
+        nn.init.zeros_(self.mlp[-1].weight)
+        nn.init.zeros_(self.mlp[-1].bias)
 
     def forward(self, condition, target):
         out = self.mlp(self.pool(condition).flatten(1))
