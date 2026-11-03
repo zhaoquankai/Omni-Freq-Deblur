@@ -118,7 +118,8 @@ def save_diagnostics(lq, gt, pred, debug, image_stem, out_dir):
     p = pred[0].detach().float().clamp(0, 1).cpu().permute(1, 2, 0).numpy()
     t = gt[0].detach().float().cpu().permute(1, 2, 0).numpy()
     b = lq[0].detach().float().cpu().permute(1, 2, 0).numpy()
-    residual = np.abs(p - t).mean(axis=2)
+    residual_rgb = np.abs(p - t)
+    residual = residual_rgb.mean(axis=2)
 
     fig, axes = plt.subplots(1, 4, figsize=(16, 4))
     for ax, image, title in zip(axes, [b, p, t, residual],
@@ -143,6 +144,53 @@ def save_diagnostics(lq, gt, pred, debug, image_stem, out_dir):
     for name, array in maps.items():
         save_heatmap(array, out_dir / f"{image_stem}_{name}.png", name)
 
+    # Frequency visualizations use a common log-amplitude normalization per image.
+    pred_fft = torch.fft.fftshift(
+        torch.fft.fft2(pred[0].detach().float(), norm="ortho"), dim=(-2, -1)
+    ).abs().mean(0).cpu().numpy()
+    gt_fft = torch.fft.fftshift(
+        torch.fft.fft2(gt[0].detach().float(), norm="ortho"), dim=(-2, -1)
+    ).abs().mean(0).cpu().numpy()
+    lq_fft = torch.fft.fftshift(
+        torch.fft.fft2(lq[0].detach().float(), norm="ortho"), dim=(-2, -1)
+    ).abs().mean(0).cpu().numpy()
+    eps = 1e-8
+    log_lq, log_pred, log_gt = (
+        np.log1p(lq_fft), np.log1p(pred_fft), np.log1p(gt_fft)
+    )
+    vmax = max(float(log_lq.max()), float(log_pred.max()), float(log_gt.max()))
+    vmin = min(float(log_lq.min()), float(log_pred.min()), float(log_gt.min()))
+    fig, axes = plt.subplots(1, 4, figsize=(16, 4))
+    for ax, image, title in zip(
+        axes,
+        [log_lq, log_pred, log_gt, np.abs(log_pred - log_gt)],
+        ["Input log spectrum", "Output log spectrum", "GT log spectrum", "Spectrum residual"]
+    ):
+        im = ax.imshow(image, cmap="magma", vmin=vmin if title != "Spectrum residual" else None,
+                       vmax=vmax if title != "Spectrum residual" else None)
+        ax.set_title(title)
+        ax.axis("off")
+        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    fig.tight_layout()
+    fig.savefig(out_dir / f"{image_stem}_spectrum.png", dpi=180)
+    plt.close(fig)
+
+    # Spatial-gradient residual complements pixel-domain PSNR/SSIM.
+    pred_t = pred.detach().float()
+    gt_t = gt.detach().float()
+    kx = torch.tensor(
+        [[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]],
+        device=pred_t.device, dtype=pred_t.dtype
+    ).view(1, 1, 3, 3) / 8.0
+    ky = kx.transpose(-1, -2)
+    pred_gray = pred_t.mean(1, keepdim=True)
+    gt_gray = gt_t.mean(1, keepdim=True)
+    pgx, pgy = F.conv2d(pred_gray, kx, padding=1), F.conv2d(pred_gray, ky, padding=1)
+    ggx, ggy = F.conv2d(gt_gray, kx, padding=1), F.conv2d(gt_gray, ky, padding=1)
+    grad_error = torch.sqrt((pgx - ggx) ** 2 + (pgy - ggy) ** 2)
+    residual_values = torch.abs(pred_t - gt_t).flatten().cpu().numpy()
+    grad_values = grad_error.flatten().cpu().numpy()
+
     gamma = debug["gamma"][0].detach().float().flatten().cpu().numpy()
     beta = debug["beta"][0].detach().float().flatten().cpu().numpy()
     fig, axes = plt.subplots(1, 2, figsize=(10, 3.5))
@@ -164,7 +212,19 @@ def save_diagnostics(lq, gt, pred, debug, image_stem, out_dir):
         "beta_min": float(beta.min()),
         "beta_max": float(beta.max()),
         "modulation_delta_l1": float(delta.abs().mean().item()),
-        "modulation_delta_l2": float(torch.sqrt(torch.mean(delta * delta)).item())
+        "modulation_delta_l2": float(torch.sqrt(torch.mean(delta * delta)).item()),
+        "relative_modulation_l2": float(
+            torch.sqrt(torch.mean(delta * delta)).item()
+            / (torch.sqrt(torch.mean(pre * pre)).item() + 1e-8)
+        ),
+        "feature_pre_post_cosine": float(F.cosine_similarity(
+            pre.flatten().unsqueeze(0), post.flatten().unsqueeze(0), dim=1
+        ).item()),
+        "residual_p50": float(np.percentile(residual_values, 50)),
+        "residual_p90": float(np.percentile(residual_values, 90)),
+        "residual_p95": float(np.percentile(residual_values, 95)),
+        "residual_p99": float(np.percentile(residual_values, 99)),
+        "gradient_mae": float(grad_error.mean().item())
     }
 
 
